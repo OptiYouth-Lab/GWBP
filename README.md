@@ -20,7 +20,45 @@ The code has been tested on V100 and A100 platforms.
 | GPU model | V100-PCIE-32GB | A100-SXM4-40GB |
 | GPU memory | 32 GB | 40 GB |
 
-## Result
+## Build and Run
 
-![image text](https://github.com/OptiYouth-Lab/GWBP/blob/main/img/runtime_speedup_2x2_singlecol.png)
+### 1.Compile the CPU Version(baseline)
+```bash
+cd baseline
+mkdir build
+cd build
+cmake ../
+make -j8
+```
+
+### 2.Compile the GPU Version(eg.GWBP-O)
+```bash
+cd GWBP-O
+make -f Makefile.gpu clean
+make -f Makefile.gpu tomo_gpu
+```
+
+### 3.Run Reconstruction
+Before running, update the executable paths in `run.sh` and `check.sh` to match the locations of the compiled `tomo_gpu` and `validate_cpu` binaries in your local environment.
+#### 3.1 Run on proteasome-bin6
+```bash
+cd ../data/proteasome-bin6
+bash run.sh
+bash check.sh
+```
+#### 3.2 Run on proteasome-bin6
+```bash
+cd ../data/TS_038_WBP_bin6
+bash run.sh
+bash check.sh
+```
+
+
+
+
+
+
+
+
+
 

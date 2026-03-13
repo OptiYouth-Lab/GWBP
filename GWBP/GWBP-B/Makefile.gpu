@@ -1,0 +1,278 @@
+###########################################
+# WBP GPU版本 Makefile (完全修复版)
+# 添加Intel OpenMP运行时库
+###########################################
+
+# 编译器配置
+CXX = icpc
+NVCC = nvcc
+
+# CUDA路径
+CUDA_PATH = /usr/local/cuda
+CUDA_INC = -I$(CUDA_PATH)/include
+CUDA_LIB = -L$(CUDA_PATH)/lib64
+
+# 项目内置FFTW路径
+FFTW_ROOT = external/fftw-3.3.9
+FFTW_INC = -I$(FFTW_ROOT)/include
+FFTW_LIB = -L$(FFTW_ROOT)/lib
+
+# Intel编译器路径
+INTEL_ROOT = /home/miaohongbo/intel/oneapi/compiler/2021.1.1
+INTEL_LIB = -L$(INTEL_ROOT)/linux/compiler/lib/intel64_lin
+
+# Intel MKL路径
+MKL_ROOT = /home/miaohongbo/intel/oneapi/mkl/latest
+MKL_INC = -I$(MKL_ROOT)/include
+MKL_LIB = -L$(MKL_ROOT)/lib/intel64
+
+# Intel运行时库 (完整版)
+# 添加了 -liomp5 (Intel OpenMP)
+INTEL_LIBS = -liomp5 -lirc -limf -lsvml -lintlc -lirng
+
+# MKL链接库
+MKL_LIBS = -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core
+
+# 项目路径
+SRC_DIR = src
+CORE_DIR = $(SRC_DIR)/core
+GPU_DIR = $(CORE_DIR)/gpu
+MAIN_DIR = $(SRC_DIR)/main
+UTIL_DIR = $(SRC_DIR)/util
+INC_DIR = $(SRC_DIR)/include
+
+# 编译标志
+# CUDA_ARCH = -arch=sm_70
+CUDA_ARCH = -gencode arch=compute_70,code=sm_70 -gencode arch=compute_80,code=sm_80
+
+# Intel编译器优化标志
+INTEL_OPT = -O3 -fp-model fast=2 -qopenmp -fno-alias \
+            -xCORE-AVX512 -qopt-zmm-usage=high
+
+# 所有include路径
+ALL_INC = -I$(INC_DIR) $(FFTW_INC) $(MKL_INC) $(CUDA_INC)
+
+# NVCC标志
+NVCC_FLAGS = -O3 $(CUDA_ARCH) -std=c++14 \
+             -ccbin=/usr/bin/g++-10 \
+             -Xcompiler -fopenmp,-fPIC \
+             -lineinfo \
+             $(ALL_INC) \
+             -DUSE_GPU
+
+# Intel编译器标志
+CXX_FLAGS = -std=c++14 $(INTEL_OPT) \
+            -fPIC \
+            $(ALL_INC) \
+            -mkl \
+            -DUSE_GPU
+
+# 库链接
+CUDA_LIBS = -lcufft -lcudart
+FFTW_LIBS = $(FFTW_LIB) -lfftw3f -lfftw3f_threads
+OTHER_LIBS = -lz -lpthread -lm -ldl
+
+# nvcc链接时的完整库列表
+# 注意: 使用 mke_intel_thread 而不是 mkl_gnu_thread，因为Intel OpenMP
+LINK_LIBS = $(CUDA_LIB) $(CUDA_LIBS) \
+            $(FFTW_LIBS) \
+            $(MKL_LIB) $(MKL_LIBS) \
+            $(INTEL_LIB) $(INTEL_LIBS) \
+            $(OTHER_LIBS)
+
+# 源文件
+CPU_SOURCES = $(CORE_DIR)/mrc.cpp \
+              $(CORE_DIR)/CTF.cpp \
+              $(CORE_DIR)/CTFBase.cpp \
+              $(CORE_DIR)/CTFAlgo.cpp \
+              $(CORE_DIR)/AlignmentBase.cpp \
+              $(CORE_DIR)/ReconstructionBase.cpp \
+              $(CORE_DIR)/ReconstructionAlgo_WBP_RAM.cpp \
+              $(UTIL_DIR)/util.cpp \
+              $(MAIN_DIR)/tomo.cpp
+
+GPU_SOURCES = $(GPU_DIR)/cuda_utils.cu \
+              $(GPU_DIR)/ctf_correction_gpu.cu \
+              $(GPU_DIR)/wbp_backproject_gpu.cu
+
+CPU_OBJS = $(CPU_SOURCES:.cpp=.o)
+GPU_OBJS = $(GPU_SOURCES:.cu=.o)
+
+TARGET = tomo_gpu
+
+###########################################
+# 编译规则
+###########################################
+
+.PHONY: all clean test info check_env
+
+all: check_env $(TARGET)
+
+check_env:
+	@echo "===================="
+	@echo "Checking Environment..."
+	@echo "===================="
+	@echo -n "Intel Compiler (icpc): "
+	@which icpc >/dev/null 2>&1 && echo "✓ Found" || (echo "✗ NOT FOUND"; exit 1)
+	@echo -n "NVCC: "
+	@which nvcc >/dev/null 2>&1 && echo "✓ Found" || (echo "✗ NOT FOUND"; exit 1)
+	@echo -n "FFTW3: "
+	@if [ -f "$(FFTW_ROOT)/include/fftw3.h" ]; then \
+		echo "✓ Found at $(FFTW_ROOT)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
+	fi
+	@echo -n "Intel MKL: "
+	@if [ -d "$(MKL_ROOT)" ]; then \
+		echo "✓ Found at $(MKL_ROOT)"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
+	fi
+	@echo -n "Intel Libraries: "
+	@if [ -d "$(INTEL_ROOT)/linux/compiler/lib/intel64_lin" ]; then \
+		echo "✓ Found"; \
+	else \
+		echo "✗ NOT FOUND"; exit 1; \
+	fi
+	@echo "===================="
+	@echo ""
+
+# 链接
+$(TARGET): $(CPU_OBJS) $(GPU_OBJS)
+	@echo "===================="
+	@echo "Linking $(TARGET)..."
+	@echo "===================="
+	$(NVCC) -o $@ $^ $(LINK_LIBS) \
+		-Xlinker -rpath,$(MKL_ROOT)/lib/intel64 \
+		-Xlinker -rpath,$(INTEL_ROOT)/linux/compiler/lib/intel64_lin
+	@echo ""
+	@echo "================================================"
+	@echo "🎉🎉🎉 BUILD SUCCESSFUL! 🎉🎉🎉"
+	@echo "================================================"
+	@echo "Executable: $(TARGET)"
+	@echo ""
+	@echo "✅ GPU版本编译完成!"
+	@echo ""
+	@echo "📌 下一步测试:"
+	@echo "  1. cd ../data/proteasome-bin6"
+	@echo "  2. ../../$(TARGET) para.txt"
+	@echo "  3. 验证程序能运行(虽然GPU代码还未激活)"
+	@echo ""
+	@echo "📝 然后按Week1指南修改代码添加GPU调用"
+	@echo "================================================"
+	@echo ""
+
+# 编译C++文件
+%.o: %.cpp
+	@echo "Compiling $< (icpc)..."
+	$(CXX) $(CXX_FLAGS) -c $< -o $@
+
+# 编译CUDA文件
+%.o: %.cu
+	@echo "Compiling $< (CUDA)..."
+	$(NVCC) $(NVCC_FLAGS) -c $< -o $@
+
+clean:
+	@echo "Cleaning..."
+	rm -f $(CPU_OBJS) $(GPU_OBJS) $(TARGET)
+	@echo "Clean done."
+
+distclean: clean
+	@echo "Deep cleaning..."
+	rm -f *~ src/*~ src/core/*~ src/core/gpu/*~
+	@echo "Deep clean done."
+
+test:
+	@echo "===================="
+	@echo "GPU Information"
+	@echo "===================="
+	nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+	@echo ""
+	nvcc --version | head -5
+	@echo ""
+
+info:
+	@echo "===================="
+	@echo "Build Configuration"
+	@echo "===================="
+	@echo "CXX:         $(CXX)"
+	@echo "NVCC:        $(NVCC)"
+	@echo "CUDA_PATH:   $(CUDA_PATH)"
+	@echo "CUDA_ARCH:   $(CUDA_ARCH)"
+	@echo "FFTW_ROOT:   $(FFTW_ROOT)"
+	@echo "MKL_ROOT:    $(MKL_ROOT)"
+	@echo "INTEL_ROOT:  $(INTEL_ROOT)"
+	@echo "INC_DIR:     $(INC_DIR)"
+	@echo "TARGET:      $(TARGET)"
+	@echo "===================="
+	@echo ""
+	@echo "Libraries:"
+	@echo "  CUDA:  -lcufft -lcudart"
+	@echo "  FFTW:  -lfftw3f -lfftw3f_threads"
+	@echo "  MKL:   -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core"
+	@echo "  Intel: -liomp5 -lirc -limf -lsvml -lintlc -lirng"
+	@echo "===================="
+
+check_files:
+	@echo "Checking source files..."
+	@echo "===================="
+	@missing=0; \
+	for src in $(CPU_SOURCES); do \
+		if [ ! -f "$$src" ]; then \
+			echo "✗ MISSING: $$src"; \
+			missing=1; \
+		else \
+			echo "✓ OK: $$src"; \
+		fi; \
+	done; \
+	for src in $(GPU_SOURCES); do \
+		if [ ! -f "$$src" ]; then \
+			echo "✗ MISSING: $$src"; \
+			missing=1; \
+		else \
+			echo "✓ OK: $$src"; \
+		fi; \
+	done; \
+	if [ $$missing -eq 1 ]; then \
+		echo "====================";\
+		echo "⚠ Some files are missing!"; \
+		exit 1; \
+	fi
+	@echo "===================="
+	@echo "✓ All files present"
+
+gpu_only: $(GPU_OBJS)
+	@echo "✓ GPU objects compiled."
+
+cpu_only: $(CPU_OBJS)
+	@echo "✓ CPU objects compiled."
+
+debug: NVCC_FLAGS = -g -G -O0 $(CUDA_ARCH) -std=c++14 \
+                     -ccbin=g++ \
+                     -Xcompiler -fopenmp,-fPIC \
+                     -lineinfo \
+                     $(ALL_INC) \
+                     -DUSE_GPU -DDEBUG
+debug: CXX_FLAGS = -g -O0 -std=c++14 -qopenmp -fPIC \
+                   $(ALL_INC) \
+                   -mkl \
+                   -DUSE_GPU -DDEBUG
+debug: clean $(TARGET)
+	@echo ""
+	@echo "===================="
+	@echo "✓ Debug build complete!"
+	@echo "===================="
+
+help:
+	@echo "===================="
+	@echo "WBP GPU Makefile"
+	@echo "===================="
+	@echo "make -f Makefile.gpu              - Build GPU version"
+	@echo "make -f Makefile.gpu clean        - Clean build files"
+	@echo "make -f Makefile.gpu test         - Show GPU info"
+	@echo "make -f Makefile.gpu info         - Show configuration"
+	@echo "make -f Makefile.gpu check_env    - Check environment"
+	@echo "make -f Makefile.gpu check_files  - Check source files"
+	@echo "make -f Makefile.gpu debug        - Build debug version"
+	@echo "make -f Makefile.gpu help         - Show this help"
+	@echo "===================="
